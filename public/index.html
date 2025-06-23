@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EchoBot 1.0</title>
+    <!--
+        1. Tailwind CSS via CDN:
+        This script tag pulls in the Tailwind CSS framework, allowing us to use utility classes
+        directly in our HTML for rapid styling without writing custom CSS.
+    -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /*
+            Embedded CSS:
+            While Tailwind handles most styling, custom scrollbar styles are added here for
+            a more refined look, as Tailwind doesn't provide these utilities directly.
+        */
+        #messages-display::-webkit-scrollbar {
+            width: 8px; /* Width of the scrollbar */
+        }
+        #messages-display::-webkit-scrollbar-track {
+            background: #f1f1f1; /* Color of the track */
+            border-radius: 10px; /* Rounded corners for the track */
+        }
+        #messages-display::-webkit-scrollbar-thumb {
+            background: #888; /* Color of the scrollbar thumb */
+            border-radius: 10px; /* Rounded corners for the thumb */
+        }
+        #messages-display::-webkit-scrollbar-thumb:hover {
+            background: #555; /* Color of the thumb on hover */
+        }
+    </style>
+</head>
+<!--
+    Responsive Design & Layout:
+    The body uses flexbox to center the chat container.
+    `min-h-screen` ensures it takes full viewport height.
+    `bg-gradient-to-br` adds a subtle background gradient.
+-->
+<body class="bg-gradient-to-br from-blue-100 to-purple-100 min-h-screen flex items-center justify-center p-4">
+
+    <!--
+        Chat Container:
+        This main div holds all chat elements. It's styled for a modern, clean look
+        with shadow, rounded corners, and constrained width (`max-w-md`).
+        `h-[calc(100vh-2rem)]` makes it take almost full height on small screens,
+        while `md:h-[600px]` sets a fixed height on medium and larger screens.
+        `flex flex-col` ensures its children (header, messages, input) stack vertically.
+    -->
+    <div id="chat-container" class="bg-white rounded-lg shadow-xl w-full max-w-md flex flex-col h-[calc(100vh-2rem)] md:h-[600px] overflow-hidden">
+        <!-- Chat Header -->
+        <div class="bg-blue-600 text-white p-4 text-center text-2xl font-bold">
+            EchoBot 1.0
+        </div>
+
+        <!--
+            Message Display Area:
+            This is where chat messages will appear.
+            `flex-1` makes it grow to fill available space.
+            `overflow-y-auto` enables vertical scrolling when content overflows.
+            `space-y-4` adds vertical spacing between messages.
+        -->
+        <div id="messages-display" class="flex-1 p-4 overflow-y-auto flex flex-col space-y-4">
+            <!--
+                Initial Bot Message:
+                A pre-defined message to greet the user when the page loads.
+                Styled as a bot message (left-aligned, gray background).
+            -->
+            <div class="flex items-start">
+                <div class="bg-gray-200 text-gray-800 p-3 rounded-lg max-w-[70%] shadow">
+                    <p>Hello! I'm EchoBot. How can I help you today?</p>
+                    <span class="text-xs text-gray-500 mt-1 block text-right">
+                        <!-- Timestamp for the initial message, dynamically set for current time -->
+                        <time datetime="${new Date().toISOString()}">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+                    </span>
+                </div>
+            </div>
+            <!-- Dynamic messages will be appended here by JavaScript -->
+        </div>
+
+        <!--
+            Status/Error Message Area:
+            A small div to display transient messages like "Typing..." or error messages.
+            Initially hidden (`hidden` class).
+        -->
+        <div id="status-message" class="text-center text-sm text-gray-600 p-2 hidden"></div>
+
+        <!--
+            Input Area:
+            Contains the message input field and the send button.
+            `border-t` adds a subtle line separating it from the messages.
+            `flex items-center space-x-2` arranges input and button horizontally.
+        -->
+        <div class="p-4 border-t border-gray-200 flex items-center space-x-2">
+            <!--
+                Message Input Field:
+                A textarea for multi-line input.
+                `flex-1` makes it grow to fill available horizontal space.
+                `resize-none` prevents manual resizing by the user.
+                `oninput` attribute automatically adjusts its height based on content.
+            -->
+            <textarea
+                id="message-input"
+                class="flex-1 resize-none border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800"
+                rows="1"
+                placeholder="Type your message..."
+                oninput='this.style.height = "";this.style.height = this.scrollHeight + "px"'
+            ></textarea>
+            <!--
+                Send Button:
+                Styled with a primary blue color and hover/focus effects.
+                `disabled:opacity-50 disabled:cursor-not-allowed` handles visual feedback
+                when the button is disabled during loading states.
+            -->
+            <button
+                id="send-button"
+                class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                Send
+            </button>
+        </div>
+    </div>
+
+    <!--
+        Modern ES6+ JavaScript:
+        All client-side logic, API calls, and DOM manipulation are handled here.
+    -->
+    <script>
+        // --- DOM Element Selections ---
+        // Get references to all necessary HTML elements by their IDs.
+        const messagesDisplay = document.getElementById('messages-display');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const statusMessageDiv = document.getElementById('status-message');
+
+        // --- Constants ---
+        // Define the API endpoint for the chat function.
+        // This will be redirected by Netlify to `/.netlify/functions/chat`.
+        const API_ENDPOINT = '/api/chat';
+
+        // --- Helper Functions ---
+
+        /**
+         * Displays a message in the chat interface.
+         * It creates a new message bubble, applies sender-specific styling,
+         * adds the message text and a timestamp, then appends it to the display area.
+         * @param {string} sender - 'user' or 'bot'. Determines styling and alignment.
+         * @param {string} messageText - The actual text content of the message.
+         * @param {string} [timestampIso] - Optional ISO 8601 timestamp string. If not provided, the current time is used.
+         */
+        function displayMessage(sender, messageText, timestampIso = new Date().toISOString()) {
+            const messageWrapper = document.createElement('div'); // Container for alignment
+            const messageBubble = document.createElement('div');  // The message bubble itself
+            const timestampSpan = document.createElement('span'); // For displaying time
+
+            // Apply Tailwind classes for styling and alignment based on the sender.
+            if (sender === 'user') {
+                // User messages are right-aligned and blue.
+                messageWrapper.className = 'flex justify-end';
+                messageBubble.className = 'bg-blue-500 text-white p-3 rounded-lg max-w-[70%] shadow-md break-words';
+            } else { // sender === 'bot'
+                // Bot messages are left-aligned and gray.
+                messageWrapper.className = 'flex justify-start';
+                messageBubble.className = 'bg-gray-200 text-gray-800 p-3 rounded-lg max-w-[70%] shadow-md break-words';
+            }
+
+            // Set the message text content.
+            messageBubble.textContent = messageText;
+
+            // Format the timestamp and append it to the message bubble.
+            const date = new Date(timestampIso);
+            timestampSpan.className = 'text-xs text-gray-500 mt-1 block text-right';
+            // Use `toLocaleTimeString` for user-friendly time display.
+            timestampSpan.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            timestampSpan.setAttribute('datetime', date.toISOString()); // For semantic HTML
+
+            // Assemble the message bubble: message text + timestamp.
+            messageBubble.appendChild(timestampSpan);
+            // Assemble the message wrapper: message bubble within its alignment container.
+            messageWrapper.appendChild(messageBubble);
+            // Add the complete message element to the display area.
+            messagesDisplay.appendChild(messageWrapper);
+
+            // Scroll to the bottom to show the latest message.
+            messagesDisplay.scrollTop = messagesDisplay.scrollHeight;
+        }
+
+        /**
+         * Sets the UI into a loading state.
+         * Disables the input field and send button to prevent multiple submissions.
+         * Displays a status message (e.g., "Typing...").
+         * @param {string} message - The status message to display.
+         */
+        function setLoadingState(message) {
+            messageInput.disabled = true;
+            sendButton.disabled = true;
+            statusMessageDiv.textContent = message;
+            statusMessageDiv.classList.remove('hidden'); // Show the status div
+            statusMessageDiv.classList.remove('text-red-500'); // Clear any previous error styling
+            statusMessageDiv.classList.add('text-gray-600'); // Set status message color
+        }
+
+        /**
+         * Clears the UI from the loading state.
+         * Re-enables the input field and send button.
+         * Hides the status message.
+         */
+        function clearLoadingState() {
+            messageInput.disabled = false;
+            sendButton.disabled = false;
+            statusMessageDiv.classList.add('hidden'); // Hide the status div
+            statusMessageDiv.textContent = ''; // Clear the message text
+            messageInput.focus(); // Return focus to the input field for continued typing
+        }
+
+        /**
+         * Displays a temporary error message in the status area.
+         * The message will automatically hide after a few seconds.
+         * @param {string} message - The error message to display.
+         */
+        function displayError(message) {
+            statusMessageDiv.textContent = `Error: ${message}`;
+            statusMessageDiv.classList.remove('hidden');
+            statusMessageDiv.classList.remove('text-gray-600'); // Clear status color
+            statusMessageDiv.classList.add('text-red-500'); // Set error message color
+            // Clear any existing timeout to prevent conflicts if multiple errors occur quickly.
+            clearTimeout(window.errorTimeout);
+            // Set a timeout to hide the error message after 5 seconds.
+            window.errorTimeout = setTimeout(() => {
+                statusMessageDiv.classList.add('hidden');
+            }, 5000);
+        }
+
+        // --- Core Logic: Send Message ---
+
+        /**
+         * Handles the process of sending the user's message to the EchoBot backend.
+         * This function is asynchronous as it involves a network request.
+         * Proper API client implementation: Uses `fetch` for POST requests,
+         * handles JSON request/response, and manages loading/error states.
+         */
+        async function sendMessage() {
+            const userMessage = messageInput.value.trim(); // Get message and remove leading/trailing whitespace
+
+            // Input Validation: Check if the message is empty.
+            if (!userMessage) {
+                displayError("Please type a message before sending.");
+                return; // Stop execution if no message
+            }
+
+            // Display the user's message immediately in the chat interface.
+            displayMessage('user', userMessage);
+
+            // Clear the input field and reset its height for the next message.
+            messageInput.value = '';
+            messageInput.style.height = ''; // Reset height to auto-adjust for new input
+
+            // Set the UI to a loading state while waiting for the bot's response.
+            setLoadingState('EchoBot is typing...');
+
+            try {
+                // Make a POST request to the API_ENDPOINT.
+                const response = await fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json', // Specify JSON content type
+                    },
+                    body: JSON.stringify({ message: userMessage }), // Send message as JSON string
+                });
+
+                // Check if the HTTP response was successful (status code 2xx).
+                if (!response.ok) {
+                    // If not successful, try to parse an error message from the backend.
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    // Throw an error with a specific message for further handling.
+                    throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
+                }
+
+                // Parse the successful JSON response from the backend.
+                const data = await response.json();
+                // Display the bot's response in the chat interface.
+                displayMessage('bot', data.botResponse, data.timestamp);
+
+            } catch (error) {
+                // Catch any errors during the fetch operation or response parsing.
+                console.error('Error sending message:', error);
+                // Display a user-friendly error message in the UI.
+                displayError(`Failed to send message: ${error.message}`);
+            } finally {
+                // Ensure the loading state is cleared regardless of success or failure.
+                clearLoadingState();
+            }
+        }
+
+        // --- Event Listeners ---
+
+        // 1. Send message on button click:
+        // Attaches an event listener to the "Send" button to call `sendMessage` when clicked.
+        sendButton.addEventListener('click', sendMessage);
+
+        // 2. Send message on Enter key press:
+        // Attaches an event listener to the message input field.
+        // If 'Enter' is pressed (and not 'Shift+Enter' for a new line), it sends the message.
+        messageInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault(); // Prevent default browser behavior (e.g., new line in textarea)
+                sendMessage();
+            }
+        });
+
+        // 3. Initial focus on input:
+        // When the DOM is fully loaded, set focus to the message input field for immediate typing.
+        document.addEventListener('DOMContentLoaded', () => {
+            messageInput.focus();
+        });
+
+    </script>
+
+    <div style="position:fixed;bottom:10px;right:10px;background:rgba(0,0,0,0.7);color:white;padding:5px 10px;border-radius:5px;font-family:sans-serif;font-size:12px">
+        Created by Dakota Rain Lock, powered by Holy Grail. A Dakota Rain Lock Invention.
+    </div>
+    
+</body>
+</html>
